@@ -1,0 +1,844 @@
+// 就労支援事業所向け業務管理システム データベーススキーマ
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// 事業所・スタッフ・利用者認証
+// ============================================
+
+model Organization {
+  id                String   @id @default(cuid())
+  name              String
+  serviceType       String   // employment_transition, employment_continuation_a, employment_continuation_b, employment_stabilization
+  capacity          Int      // 定員
+  postalCode        String?
+  address           String?
+  phone             String?
+  email             String?
+  openDays          String?  // JSON: 開所曜日
+  businessHours     String?  // JSON: 営業時間
+  settings          String?  // JSON: 各種設定（アラート日数、計算ルール等）
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  staffUsers        StaffUser[]
+  clients           Client[]
+  alertRules        AlertRule[]
+  wageRules         WageRule[]
+  interviewSessions InterviewSession[]
+  supportPlans      SupportPlan[]
+}
+
+model StaffUser {
+  id              String   @id @default(cuid())
+  organizationId  String
+  organization    Organization @relation(fields: [organizationId], references: [id])
+  email           String   @unique
+  passwordHash    String
+  name            String
+  role            String   // admin, service_manager, support_staff, office_staff
+  permissions     String?  // JSON: 詳細権限設定
+  mfaEnabled      Boolean  @default(false)
+  mfaSecret       String?
+  isActive        Boolean  @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // 監査ログ
+  auditLogs       AuditLog[]
+  // 勤怠確定
+  attendanceConfirmations AttendanceConfirmation[]
+  // 支援記録
+  supportNotes    SupportNote[]
+  // 日報コメント
+  dailyReportComments DailyReportComment[]
+  // 面談セッション
+  interviewSessions InterviewSession[]
+  // 個別支援計画
+  supportPlansCreated SupportPlan[]
+  planMonitorings PlanMonitoring[]
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model ClientUser {
+  id              String   @id @default(cuid())
+  clientId        String   @unique
+  client          Client   @relation(fields: [clientId], references: [id])
+  email           String?  @unique
+  passwordHash    String?
+  lineUserId      String?  @unique
+  isActive        Boolean  @default(true)
+  lastLoginAt     DateTime?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ============================================
+// 利用者情報
+// ============================================
+
+model Client {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+
+  // 基本情報
+  clientNumber      String?  // 利用者番号
+  lastName          String
+  firstName         String
+  lastNameKana      String?
+  firstNameKana     String?
+  birthDate         DateTime?
+  gender            String?  // male, female, other, unknown
+  postalCode        String?
+  address           String?
+  phone             String?
+  email             String?
+  emergencyContact  String?  // JSON: 緊急連絡先
+
+  // サービス情報
+  serviceType       String   // employment_transition, employment_continuation_a, employment_continuation_b
+  startDate         DateTime // 利用開始日
+  endDate           DateTime? // 利用終了日（予定）
+  scheduledDays     String?  // JSON: 通所予定曜日
+  needsTransport    Boolean  @default(false)
+  transportDetails  String?  // 送迎詳細
+  assignedStaffId   String?  // 担当支援員ID
+
+  // 状態
+  status            String   @default("active") // active, suspended, terminated
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // リレーション
+  clientUser        ClientUser?
+  sensitiveProfile  ClientSensitiveProfile?
+  certificates      Certificate[]
+  attendanceReports AttendanceReport[]
+  attendanceConfirmations AttendanceConfirmation[]
+  dailyReports      DailyReport[]
+  supportNotes      SupportNote[]
+  wageRules         WageRule[]
+  workLogs          WorkLog[]
+  payrollLines      PayrollLine[]
+  interviewSessions InterviewSession[]
+  supportPlans      SupportPlan[]
+  consents          Consent[]
+
+  @@index([organizationId])
+  @@index([status])
+  @@index([serviceType])
+}
+
+// 要配慮情報（分離保管）
+model ClientSensitiveProfile {
+  id              String   @id @default(cuid())
+  clientId        String   @unique
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // 障がい情報
+  disabilityTypes String?  // JSON: 障がい種別配列
+  disabilityGrade String?  // 等級
+  characteristics String?  // 特性・傾向
+
+  // 配慮事項
+  accommodations  String?  // JSON: 合理的配慮
+  restrictions    String?  // JSON: 禁止事項・禁忌
+  medications     String?  // JSON: 服薬情報
+  medicalHistory  String?  // 既往歴
+  risks           String?  // リスク情報
+
+  // 支援方針
+  supportPolicy   String?  // 支援の基本方針
+  goals           String?  // JSON: 目標
+
+  // 暗号化キー（将来用）
+  encryptionKeyId String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ============================================
+// 証憑・期限管理
+// ============================================
+
+model Certificate {
+  id                String   @id @default(cuid())
+  clientId          String
+  client            Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // 証憑情報
+  type              String   // recipient_certificate, disability_certificate_physical, disability_certificate_intellectual, disability_certificate_mental, self_support_medical, other
+  typeName          String   // 表示名
+  number            String?  // 番号
+  issuedDate        DateTime? // 交付日
+  validFrom         DateTime? // 有効開始日
+  validUntil        DateTime  // 有効期限
+
+  // 更新管理
+  renewalStartDate  DateTime? // 更新申請開始可能日
+  requiredDocs      String?   // JSON: 必要書類
+  municipalityLink  String?   // 自治体手続きリンク
+  assignedStaffId   String?   // 担当者
+
+  // 添付ファイル
+  attachmentUrl     String?   // ファイルURL
+  attachmentKey     String?   // ストレージキー
+
+  // 状態
+  status            String   @default("valid") // valid, expiring_soon, expired, renewed
+  notes             String?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  alerts            Alert[]
+
+  @@index([clientId])
+  @@index([validUntil])
+  @@index([type])
+  @@index([status])
+}
+
+model AlertRule {
+  id                String   @id @default(cuid())
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+
+  // ルール設定
+  certificateType   String   // 対象の証憑タイプ（または"all"）
+  daysBeforeList    String   // JSON: [90, 60, 30, 14, 7, 0, -1] 等
+  notifyRoles       String   // JSON: 通知先ロール配列
+  isEnabled         Boolean  @default(true)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([organizationId])
+}
+
+model Alert {
+  id                String   @id @default(cuid())
+  certificateId     String
+  certificate       Certificate @relation(fields: [certificateId], references: [id], onDelete: Cascade)
+
+  // アラート情報
+  alertType         String   // days_before_90, days_before_60, etc.
+  alertDate         DateTime // アラート発生日
+  dueDate           DateTime // 期限日
+
+  // 対応状況
+  status            String   @default("pending") // pending, acknowledged, resolved
+  acknowledgedBy    String?
+  acknowledgedAt    DateTime?
+  resolvedBy        String?
+  resolvedAt        DateTime?
+  notes             String?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([certificateId])
+  @@index([status])
+  @@index([alertDate])
+}
+
+// ============================================
+// 勤怠管理
+// ============================================
+
+// 利用者からの申告
+model AttendanceReport {
+  id              String   @id @default(cuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+
+  // 申告内容
+  status          String   // present, absent, late, early_leave, half_day
+  checkInTime     DateTime?
+  checkOutTime    DateTime?
+  reason          String?
+  notes           String?
+  source          String   @default("web") // web, line, app
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  // 確定との紐づけ
+  confirmation    AttendanceConfirmation?
+
+  @@unique([clientId, date])
+  @@index([clientId])
+  @@index([date])
+}
+
+// スタッフによる確定
+model AttendanceConfirmation {
+  id              String   @id @default(cuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  reportId        String?  @unique
+  report          AttendanceReport? @relation(fields: [reportId], references: [id])
+  date            DateTime @db.Date
+
+  // 確定内容
+  status          String   // present, absent, late, early_leave, half_day, no_show
+  checkInTime     DateTime?
+  checkOutTime    DateTime?
+  actualMinutes   Int?     // 実働分数
+  reason          String?
+  notes           String?
+
+  // 確定者情報
+  confirmedById   String
+  confirmedBy     StaffUser @relation(fields: [confirmedById], references: [id])
+  confirmedAt     DateTime @default(now())
+
+  // 修正履歴
+  revisionHistory String?  // JSON: 修正履歴配列
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([clientId, date])
+  @@index([clientId])
+  @@index([date])
+  @@index([confirmedById])
+}
+
+// ============================================
+// 日報
+// ============================================
+
+model DailyReport {
+  id              String   @id @default(cuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+
+  // 日報内容
+  workContent     String?  // JSON: 作業内容（選択＋自由記述）
+  mood            Int?     // 気分スコア（1-5）
+  health          Int?     // 体調スコア（1-5）
+  reflection      String?  // 所感
+  concerns        String?  // JSON: 困りごと（チェック＋自由）
+
+  // 状態
+  isSubmitted     Boolean  @default(false)
+  submittedAt     DateTime?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  comments        DailyReportComment[]
+
+  @@unique([clientId, date])
+  @@index([clientId])
+  @@index([date])
+}
+
+model DailyReportComment {
+  id              String   @id @default(cuid())
+  reportId        String
+  report          DailyReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  // コメント内容
+  content         String
+  isTemplate      Boolean  @default(false)
+
+  // 記入者
+  staffId         String
+  staff           StaffUser @relation(fields: [staffId], references: [id])
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([reportId])
+  @@index([staffId])
+}
+
+// ============================================
+// 支援記録
+// ============================================
+
+model SupportNote {
+  id              String   @id @default(cuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+
+  // 記録内容
+  category        String   // work, life, interpersonal, health, interview, family_contact, other
+  tags            String?  // JSON: タグ配列
+  content         String
+  isImportant     Boolean  @default(false) // 引継ぎ対象
+
+  // 記入者
+  staffId         String
+  staff           StaffUser @relation(fields: [staffId], references: [id])
+
+  // 版管理
+  version         Int      @default(1)
+  revisionHistory String?  // JSON: 編集履歴
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([date])
+  @@index([staffId])
+  @@index([category])
+}
+
+// ============================================
+// 工賃・給与
+// ============================================
+
+model WageRule {
+  id              String   @id @default(cuid())
+  organizationId  String?
+  organization    Organization? @relation(fields: [organizationId], references: [id])
+  clientId        String?
+  client          Client?  @relation(fields: [clientId], references: [id])
+
+  // ルール設定
+  name            String
+  calculationType String   // hourly, daily, piece_rate, mixed
+  hourlyRate      Int?     // 時給（円）
+  dailyRate       Int?     // 日額（円）
+  pieceRates      String?  // JSON: 出来高単価設定
+
+  // 控除設定
+  deductions      String?  // JSON: 控除設定
+
+  // 有効期間
+  validFrom       DateTime
+  validUntil      DateTime?
+  isDefault       Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([organizationId])
+  @@index([clientId])
+}
+
+model WorkLog {
+  id              String   @id @default(cuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  date            DateTime @db.Date
+
+  // 作業内容
+  workType        String   // 作業種別
+  quantity        Float?   // 数量
+  unit            String?  // 単位
+  notes           String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([date])
+}
+
+model PayrollRun {
+  id              String   @id @default(cuid())
+  organizationId  String
+
+  // 締め情報
+  periodStart     DateTime @db.Date
+  periodEnd       DateTime @db.Date
+  status          String   @default("draft") // draft, calculating, confirmed, paid
+
+  // 確定情報
+  confirmedById   String?
+  confirmedAt     DateTime?
+  paidAt          DateTime?
+
+  notes           String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  lines           PayrollLine[]
+
+  @@index([organizationId])
+  @@index([periodStart])
+}
+
+model PayrollLine {
+  id              String   @id @default(cuid())
+  payrollRunId    String
+  payrollRun      PayrollRun @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id])
+
+  // 計算結果
+  workDays        Int      // 出勤日数
+  totalMinutes    Int      // 総労働分数
+  baseAmount      Int      // 基本額
+  pieceAmount     Int      @default(0) // 出来高額
+  deductions      Int      @default(0) // 控除額
+  netAmount       Int      // 支給額
+
+  // 明細
+  breakdown       String?  // JSON: 詳細内訳
+  adjustments     String?  // JSON: 調整（理由付き）
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([payrollRunId])
+  @@index([clientId])
+}
+
+// ============================================
+// 面談・個別支援計画
+// ============================================
+
+model InterviewSession {
+  id                String   @id @default(cuid())
+  clientId          String
+  client            Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+
+  // セッション情報
+  sessionDate       DateTime
+  sessionType       String   // initial_assessment, monitoring, review, other
+  conductedById     String
+  conductedBy       StaffUser @relation(fields: [conductedById], references: [id])
+  participants      String?  // JSON: 参加者リスト
+  location          String?
+
+  // 同意管理
+  recordingConsent    Boolean  @default(false)
+  aiProcessingConsent Boolean  @default(false)
+  consentDate         DateTime?
+  consentBy           String?  // 同意者名
+  consentRelationship String?  // 本人との関係
+  consentVersion      String?  // 同意文面バージョン
+
+  // 状態
+  status            String   @default("draft") // draft, recording, transcribing, processing, completed, archived
+  notes             String?
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // リレーション
+  mediaAssets       MediaAsset[]
+  transcripts       Transcript[]
+  aiSummaries       AISummary[]
+  aiExtractions     AIExtraction[]
+  supportPlans      SupportPlan[]
+
+  @@index([clientId])
+  @@index([organizationId])
+  @@index([sessionDate])
+  @@index([status])
+}
+
+model MediaAsset {
+  id              String   @id @default(cuid())
+  sessionId       String
+  session         InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // ファイル情報
+  storageKey      String   // ストレージパス
+  fileName        String
+  mimeType        String
+  fileSize        Int      // バイト
+  duration        Int?     // 秒
+
+  // 暗号化
+  isEncrypted     Boolean  @default(false)
+  encryptionKeyId String?
+
+  // メタデータ
+  uploadedBy      String
+  uploadMethod    String   @default("upload") // upload, record
+
+  createdAt       DateTime @default(now())
+
+  @@index([sessionId])
+}
+
+model Transcript {
+  id              String   @id @default(cuid())
+  sessionId       String
+  session         InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // 文字起こしデータ
+  version         Int      @default(1)
+  fullText        String
+  segments        String   // JSON: [{start, end, text, speaker?}]
+  language        String   @default("ja")
+
+  // メタデータ
+  confidence      Float?   // 0-1
+  processingEngine String  // whisper, google, azure, etc.
+  processingTime  Int?     // 処理時間（秒）
+
+  processedAt     DateTime @default(now())
+
+  @@unique([sessionId, version])
+  @@index([sessionId])
+}
+
+model AISummary {
+  id              String   @id @default(cuid())
+  sessionId       String
+  session         InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // 要約データ
+  version         Int      @default(1)
+  summaryShort    String   // 短い要約（1-2文）
+  summaryMedium   String   // 中程度の要約
+  summaryLong     String   // 詳細要約
+
+  // メタデータ
+  model           String
+  processingTime  Int?
+
+  processedAt     DateTime @default(now())
+
+  @@unique([sessionId, version])
+  @@index([sessionId])
+}
+
+model AIExtraction {
+  id              String   @id @default(cuid())
+  sessionId       String
+  session         InterviewSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  // 抽出データ
+  version         Int      @default(1)
+  extractedData   String   // JSON: 構造化抽出データ
+
+  // メタデータ
+  model           String
+  processingTime  Int?
+
+  processedAt     DateTime @default(now())
+
+  @@unique([sessionId, version])
+  @@index([sessionId])
+}
+
+// 個別支援計画テンプレート
+model PlanTemplate {
+  id              String   @id @default(cuid())
+  organizationId  String?  // null = システムデフォルト
+
+  // テンプレート情報
+  name            String
+  description     String?
+  serviceType     String   // employment_transition, employment_continuation_a, employment_continuation_b, etc.
+  category        String   @default("standard") // standard, initial, review, monitoring
+
+  // テンプレート内容
+  content         String   // JSON: テンプレート構造
+  sections        String?  // JSON: セクション定義
+  defaultGoals    String?  // JSON: デフォルト目標例
+
+  // 状態
+  isActive        Boolean  @default(true)
+  isDefault       Boolean  @default(false)
+  sortOrder       Int      @default(0)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  supportPlans    SupportPlan[]
+
+  @@index([organizationId])
+  @@index([serviceType])
+  @@index([isActive])
+}
+
+model SupportPlan {
+  id                String   @id @default(cuid())
+  clientId          String
+  client            Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  organizationId    String
+  organization      Organization @relation(fields: [organizationId], references: [id])
+  sessionId         String?
+  session           InterviewSession? @relation(fields: [sessionId], references: [id])
+  templateId        String?
+  template          PlanTemplate? @relation(fields: [templateId], references: [id])
+
+  // 計画期間
+  planPeriodStart   DateTime @db.Date
+  planPeriodEnd     DateTime @db.Date
+  serviceType       String   // サービス種別
+
+  // 計画内容
+  planContent       String   // JSON: 計画全体
+
+  // 状態
+  status            String   @default("draft") // draft, pending_consent, approved, delivered, monitoring
+  createdById       String
+  createdBy         StaffUser @relation(fields: [createdById], references: [id])
+
+  // 同意・交付
+  consentDate       DateTime?
+  consentBy         String?
+  consentRelationship String?
+  consentSignature  String?  // 署名データ
+  deliveryDate      DateTime?
+  deliveryTo        String?  // 交付先
+  deliveryMethod    String?  // direct, mail, email
+
+  // モニタリング
+  nextMonitoringDate DateTime?
+  monitoringFrequency Int?   // 月数
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  // リレーション
+  versions          SupportPlanVersion[]
+  monitorings       PlanMonitoring[]
+
+  @@index([clientId])
+  @@index([organizationId])
+  @@index([status])
+  @@index([planPeriodStart])
+  @@index([nextMonitoringDate])
+}
+
+model SupportPlanVersion {
+  id              String   @id @default(cuid())
+  planId          String
+  plan            SupportPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  version         Int
+  planContent     String   // JSON
+  changes         String?  // 変更内容
+  isLocked        Boolean  @default(false)
+
+  createdById     String
+  createdAt       DateTime @default(now())
+
+  @@unique([planId, version])
+  @@index([planId])
+}
+
+model PlanMonitoring {
+  id                String   @id @default(cuid())
+  planId            String
+  plan              SupportPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  // モニタリング情報
+  monitoringDate    DateTime @db.Date
+  result            String   // JSON: モニタリング結果
+  hasChanges        Boolean  @default(false)
+  nextMonitoringDate DateTime?
+
+  // 記録者
+  conductedById     String
+  conductedBy       StaffUser @relation(fields: [conductedById], references: [id])
+  notes             String?
+
+  createdAt         DateTime @default(now())
+
+  @@index([planId])
+  @@index([monitoringDate])
+}
+
+// ============================================
+// 同意管理
+// ============================================
+
+model Consent {
+  id              String   @id @default(cuid())
+  clientId        String
+  client          Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  // 同意情報
+  consentType     String   // personal_info, recording, ai_processing, data_sharing
+  consentVersion  String   // 同意文面バージョン
+  isGranted       Boolean
+  grantedAt       DateTime?
+  revokedAt       DateTime?
+
+  // 同意者
+  grantedBy       String   // 本人 or 代理人名
+  relationship    String?  // 関係性
+
+  notes           String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([clientId])
+  @@index([consentType])
+}
+
+// ============================================
+// 監査ログ
+// ============================================
+
+model AuditLog {
+  id              String   @id @default(cuid())
+  staffId         String?
+  staff           StaffUser? @relation(fields: [staffId], references: [id])
+
+  // 操作情報
+  action          String   // view, create, update, delete, export, login, logout
+  resource        String   // clients, certificates, attendance, support_notes, etc.
+  resourceId      String?
+
+  // 詳細
+  details         String?  // JSON: 操作詳細
+  ipAddress       String?
+  userAgent       String?
+
+  createdAt       DateTime @default(now())
+
+  @@index([staffId])
+  @@index([action])
+  @@index([resource])
+  @@index([createdAt])
+}
+
+// ============================================
+// 帳票出力履歴
+// ============================================
+
+model DocumentOutput {
+  id              String   @id @default(cuid())
+
+  // 出力情報
+  documentType    String   // payslip, receipt, support_record, support_plan, etc.
+  fileName        String
+  storageKey      String?
+
+  // 対象
+  clientId        String?
+  periodStart     DateTime?
+  periodEnd       DateTime?
+
+  // 出力者
+  outputById      String
+  outputAt        DateTime @default(now())
+
+  @@index([documentType])
+  @@index([clientId])
+  @@index([outputAt])
+}

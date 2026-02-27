@@ -1,0 +1,7 @@
+{
+  "name": "support-plan-app",
+  "private": true,
+  "scripts": {
+    "build": "cd backend && npm ci && npx prisma generate && (npx prisma db push --accept-data-loss && npm run db:seed || true) && cd ../frontend && npm ci && npm run build"
+  }
+}
