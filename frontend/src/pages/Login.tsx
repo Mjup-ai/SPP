@@ -168,6 +168,8 @@ const Login: React.FC = () => {
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
+                  aria-label={showPassword ? 'パスワードを非表示' : 'パスワードを表示'}
+                  title={showPassword ? 'パスワードを非表示' : 'パスワードを表示'}
                   className="absolute inset-y-0 right-0 pr-3 flex items-center"
                 >
                   {showPassword ? (
