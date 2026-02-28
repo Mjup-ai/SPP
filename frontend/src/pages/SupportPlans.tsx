@@ -570,9 +570,16 @@ const SupportPlanCreateModal: React.FC<SupportPlanCreateModalProps> = ({ useTemp
     },
   });
 
+  const hasClients = (clientsQuery.data?.length ?? 0) > 0;
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
+
+    if (!hasClients) {
+      setFormError('利用者が未登録のため、支援計画を作成できません。先に「利用者管理」から利用者を登録してください。');
+      return;
+    }
 
     if (!formData.clientId) {
       setFormError('利用者を選択してください');
@@ -637,11 +644,22 @@ const SupportPlanCreateModal: React.FC<SupportPlanCreateModalProps> = ({ useTemp
             <label className="block text-sm font-medium text-gray-700 mb-1.5">
               利用者 <span className="text-red-500">*</span>
             </label>
+
+            {!clientsQuery.isLoading && !hasClients && (
+              <div className="mb-3">
+                <Alert
+                  type="info"
+                  message="利用者が未登録です。支援計画を作成するには、先に「利用者管理」から利用者を登録してください。"
+                />
+              </div>
+            )}
+
             <select
               value={formData.clientId}
               onChange={(e) => handleClientChange(e.target.value)}
               className="w-full border border-gray-300 rounded-lg px-3 py-2.5 text-sm focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
               required
+              disabled={!hasClients}
             >
               <option value="">利用者を選択してください</option>
               {clientsQuery.data?.map((client) => (
@@ -768,7 +786,7 @@ const SupportPlanCreateModal: React.FC<SupportPlanCreateModalProps> = ({ useTemp
             </button>
             <button
               type="submit"
-              disabled={mutation.isPending}
+              disabled={mutation.isPending || !hasClients}
               className="px-6 py-2.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm font-medium transition-colors"
             >
               {mutation.isPending ? '作成中...' : '計画を作成'}
