@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../services/api';
-import { format, differenceInDays, parseISO } from 'date-fns';
+import { format, differenceInDays, parseISO, addMonths } from 'date-fns';
 import { LoadingSpinner, Alert } from '../components/ui';
 
 // ============================================
@@ -516,7 +516,7 @@ const SupportPlanCreateModal: React.FC<SupportPlanCreateModalProps> = ({ useTemp
   const [formData, setFormData] = useState({
     clientId: '',
     planPeriodStart: format(new Date(), 'yyyy-MM-dd'),
-    planPeriodEnd: '',
+    planPeriodEnd: format(addMonths(new Date(), 12), 'yyyy-MM-dd'),
     serviceType: 'employment_continuation_b',
     monitoringFrequency: 6,
     templateId: '',
