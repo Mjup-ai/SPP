@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { Alert } from '../components/ui';
@@ -10,6 +10,7 @@ const Login: React.FC = () => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const passwordRef = useRef<HTMLInputElement>(null);
 
   const { login, user } = useAuth();
   const navigate = useNavigate();
@@ -47,6 +48,10 @@ const Login: React.FC = () => {
         return;
       }
       setError(err.response?.data?.error || 'ログインに失敗しました');
+      // 失敗時はパスワードをクリア（覗き見・コピペミス防止）
+      setPassword('');
+      // 入力に戻しやすくする
+      queueMicrotask(() => passwordRef.current?.focus());
     } finally {
       setIsLoading(false);
     }
@@ -156,6 +161,7 @@ const Login: React.FC = () => {
                   </svg>
                 </div>
                 <input
+                  ref={passwordRef}
                   id="password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
