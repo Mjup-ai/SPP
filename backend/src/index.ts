@@ -81,6 +81,15 @@ app.get('/health', (req, res) => {
   });
 });
 
+// Vercel 側の想定エンドポイント（/api/health）も提供
+app.get('/api/health', (req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    version: process.env.npm_package_version || '1.0.0'
+  });
+});
+
 // API全体にレート制限を適用
 app.use('/api', apiLimiter);
 

@@ -59,6 +59,10 @@ router.post('/staff/login', async (req: Request, res: Response) => {
       { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as jwt.SignOptions['expiresIn'] }
     );
 
+    // 認証レスポンスにトークンを含むため、キャッシュ禁止（中間キャッシュ/ブラウザの誤キャッシュ対策）
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
+
     res.json({
       token,
       user: {
@@ -116,6 +120,10 @@ router.post('/client/login', async (req: Request, res: Response) => {
       process.env.JWT_SECRET || 'default-secret',
       { expiresIn: (process.env.JWT_EXPIRES_IN || '7d') as jwt.SignOptions['expiresIn'] }
     );
+
+    // 認証レスポンスにトークンを含むため、キャッシュ禁止（中間キャッシュ/ブラウザの誤キャッシュ対策）
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Pragma', 'no-cache');
 
     res.json({
       token,
