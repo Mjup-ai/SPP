@@ -18,12 +18,46 @@ import type { IncomingMessage, ServerResponse } from 'http';
 
 type Json = Record<string, unknown>;
 
+function setCors(res: ServerResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'content-type, authorization');
+  res.setHeader('Access-Control-Max-Age', '86400');
+}
+
 function sendJson(res: ServerResponse, status: number, body: Json) {
   res.statusCode = status;
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('content-type', 'application/json; charset=utf-8');
+  setCors(res);
   res.end(JSON.stringify(body));
 }
+
+function sendText(
+  res: ServerResponse,
+  status: number,
+  body: string,
+  contentType: string = 'text/plain; charset=utf-8'
+) {
+  res.statusCode = status;
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('content-type', contentType);
+  setCors(res);
+  res.end(body);
+}
+
+function getBearerToken(req: IncomingMessage): string | null {
+  const h = req.headers['authorization'];
+  const s = Array.isArray(h) ? h[0] : h;
+  if (!s) return null;
+  const m = s.match(/^Bearer\s+(.+)$/i);
+  return m ? m[1] : null;
+}
+
+const TOKENS = {
+  staffAdmin: process.env.STAFF_ADMIN_TOKEN ?? 'staff-admin-token',
+  client: process.env.CLIENT_TOKEN ?? 'client-token',
+} as const;
 
 async function readJsonBody(req: IncomingMessage): Promise<any> {
   const chunks: Buffer[] = [];
@@ -58,18 +92,6 @@ function getQuery(req: IncomingMessage) {
   return new URLSearchParams(q);
 }
 
-function getBearerToken(req: IncomingMessage): string | null {
-  const h = req.headers['authorization'];
-  const s = Array.isArray(h) ? h[0] : h;
-  if (!s) return null;
-  const m = s.match(/^Bearer\s+(.+)$/i);
-  return m ? m[1] : null;
-}
-
-const TOKENS = {
-  staffAdmin: 'staff-admin-token',
-  client: 'client-token',
-} as const;
 
 type MockClient = {
   id: string;
@@ -107,6 +129,13 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
   try {
     const method = (req.method || 'GET').toUpperCase();
     const path = getPath(req);
+
+    if (method === 'OPTIONS') {
+      setCors(res);
+      res.statusCode = 204;
+      res.end();
+      return;
+    }
 
     // --- health ---
     if (method === 'GET' && path === '/api/health') {
@@ -227,6 +256,94 @@ export default async function handler(req: IncomingMessage, res: ServerResponse)
         recentComments: [],
         unreadCommentsCount: 0,
       });
+    }
+
+    // --- reports: history (staff) ---
+    if (method === 'GET' && path === '/api/reports/history') {
+      const token = getBearerToken(req);
+      if (token !== TOKENS.staffAdmin) return sendJson(res, 401, { error: 'Unauthorized' });
+
+      // Minimal: return empty list so UI can render without 404.
+      // Future: push entries here when export endpoints are called.
+      return sendJson(res, 200, { outputs: [] });
+    }
+
+    // --- reports: attendance monthly (staff) ---
+    if (method === 'GET' && path === '/api/reports/attendance/monthly') {
+      const token = getBearerToken(req);
+      if (token !== TOKENS.staffAdmin) return sendJson(res, 401, { error: 'Unauthorized' });
+
+      const q = getQuery(req);
+      const month = String(q.get('month') || '').trim(); // yyyy-MM
+      const format = String(q.get('format') || 'csv').trim();
+
+      const safeMonth = /^\d{4}-\d{2}$/.test(month) ? month : new Date().toISOString().slice(0, 7);
+      const [yStr, mStr] = safeMonth.split('-');
+      const year = Number(yStr);
+      const m = Number(mStr);
+
+      const daysInMonth = new Date(year, m, 0).getDate();
+
+      const rows = [] as Array<{ date: string; clientNumber: string; name: string; status: string }>;
+      for (let d = 1; d <= daysInMonth; d++) {
+        const date = `${safeMonth}-${String(d).padStart(2, '0')}`;
+        const dow = new Date(year, m - 1, d).getDay();
+        const isWeekend = dow === 0 || dow === 6;
+        rows.push({
+          date,
+          clientNumber: '001',
+          name: 'サンプル 太郎',
+          status: isWeekend ? '休' : d === 1 ? '出席' : '',
+        });
+      }
+
+      if (format === 'html') {
+        const html = `<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>勤怠月報 ${safeMonth}</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif; padding: 16px; }
+    h1 { font-size: 18px; margin: 0 0 12px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 12px; }
+    th { background: #f5f5f5; text-align: left; }
+    @media print { body { padding: 0; } }
+  </style>
+</head>
+<body>
+  <h1>勤怠月報（${safeMonth}）</h1>
+  <table>
+    <thead>
+      <tr>
+        <th>日付</th>
+        <th>利用者番号</th>
+        <th>氏名</th>
+        <th>ステータス</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${rows
+        .map(
+          (r) =>
+            `<tr><td>${r.date}</td><td>${r.clientNumber}</td><td>${r.name}</td><td>${r.status}</td></tr>`
+        )
+        .join('')}
+    </tbody>
+  </table>
+</body>
+</html>`;
+        return sendText(res, 200, html, 'text/html; charset=utf-8');
+      }
+
+      // default csv
+      const csvLines = [
+        ['date', 'clientNumber', 'name', 'status'].join(','),
+        ...rows.map((r) => [r.date, r.clientNumber, r.name, r.status].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(',')),
+      ];
+      return sendText(res, 200, csvLines.join('\n'), 'text/csv; charset=utf-8');
     }
 
     // --- support plans (staff) ---
