@@ -29,6 +29,16 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
+      // 直前に見ていたページへ戻れるように保持（/login自体は除外）
+      try {
+        const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+        if (currentPath && currentPath !== '/login') {
+          localStorage.setItem('redirectAfterLogin', currentPath);
+        }
+      } catch {
+        // no-op
+      }
+
       localStorage.removeItem('token');
       window.location.href = '/login';
     }

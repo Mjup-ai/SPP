@@ -36,7 +36,19 @@ const Login: React.FC = () => {
     try {
       await login(email, password, userType);
       // 利用者とスタッフで異なるページへ遷移
-      navigate(userType === 'client' ? '/client' : '/');
+      if (userType === 'client') {
+        navigate('/client');
+        return;
+      }
+
+      // 401でログイン画面へ飛ばされた場合は元のURLへ戻す
+      const redirect = localStorage.getItem('redirectAfterLogin');
+      if (redirect && redirect !== '/login') {
+        localStorage.removeItem('redirectAfterLogin');
+        navigate(redirect);
+      } else {
+        navigate('/');
+      }
     } catch (err: any) {
       // サーバー接続不可（バックエンド未設定・ネットワークエラー）
       if (!err.response && (err.code === 'ERR_NETWORK' || err.message?.includes('Network'))) {
